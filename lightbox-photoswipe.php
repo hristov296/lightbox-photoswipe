@@ -3,12 +3,14 @@
 Plugin Name: Lightbox with PhotoSwipe
 Plugin URI: https://wordpress.org/plugins/lightbox-photoswipe/
 Description: Lightbox with PhotoSwipe
-Version: 1.97
+Version: 2.8
 Author: Arno Welzel
 Author URI: http://arnowelzel.de
 Text Domain: lightbox-photoswipe
 */
 defined('ABSPATH') or die();
+
+require_once ABSPATH . '/wp-admin/includes/image.php';
 
 /**
  * Lightbox with PhotoSwipe
@@ -17,12 +19,13 @@ defined('ABSPATH') or die();
  */
 class LightboxPhotoSwipe
 {
-    const LIGHTBOX_PHOTOSWIPE_VERSION = '1.97';
+    const LIGHTBOX_PHOTOSWIPE_VERSION = '2.8';
     var $disabled_post_ids;
     var $share_facebook;
     var $share_pinterest;
     var $share_twitter;
     var $share_download;
+    var $share_direct;
     var $close_on_scroll;
     var $close_on_drag;
     var $history;
@@ -30,6 +33,10 @@ class LightboxPhotoSwipe
     var $skin;
     var $usepostdata;
     var $enabled;
+    var $close_on_click;
+    var $fulldesktop;
+    var $use_alt;
+    var $show_exif;
 
     /**
      * Constructor
@@ -41,6 +48,7 @@ class LightboxPhotoSwipe
         $this->share_pinterest = get_option('lightbox_photoswipe_share_pinterest');
         $this->share_twitter = get_option('lightbox_photoswipe_share_twitter');
         $this->share_download = get_option('lightbox_photoswipe_share_download');
+        $this->share_direct = get_option('lightbox_photoswipe_share_direct');
         $this->close_on_scroll = get_option('lightbox_photoswipe_close_on_scroll');
         $this->close_on_drag = get_option('lightbox_photoswipe_close_on_drag');
         $this->history = get_option('lightbox_photoswipe_history');
@@ -50,24 +58,29 @@ class LightboxPhotoSwipe
         $this->show_caption = get_option('lightbox_photoswipe_show_caption');
         $this->loop = get_option('lightbox_photoswipe_loop');
         $this->pinchtoclose = get_option('lightbox_photoswipe_pinchtoclose');
+        $this->taptotoggle = get_option('lightbox_photoswipe_taptotoggle');
         $this->spacing = get_option('lightbox_photoswipe_spacing');
         $this->skin = get_option('lightbox_photoswipe_skin');
         $this->usepostdata = get_option('lightbox_photoswipe_usepostdata');
+        $this->close_on_click = get_option('lightbox_photoswipe_close_on_click');
+        $this->fulldesktop = get_option('lightbox_photoswipe_fulldesktop');
+        $this->use_alt = get_option('lightbox_photoswipe_use_alt');
+        $this->show_exif = get_option('lightbox_photoswipe_showexif');
 
         $this->enabled = true;
         
         if (!is_admin()) {
             add_action('wp_enqueue_scripts', array($this, 'enqueueScripts'));
             add_action('wp_footer', array($this, 'footer'));
-            add_action('template_redirect', array($this, 'outputFilter'), 99);
+            add_action('template_redirect', array($this, 'outputFilter'), PHP_INT_MAX);
         }
         add_action('wpmu_new_blog', array($this, 'onCreateBlog'), 10, 6);
         add_filter('wpmu_drop_tables', array($this, 'onDeleteBlog'));
         add_action('plugins_loaded', array($this, 'init'));
         add_action('admin_menu', array($this, 'adminMenu'));
 
-        register_activation_hook(__FILE__, array(get_class($this), 'onActivate'));
-        register_deactivation_hook(__FILE__, array(get_class($this), 'onDeactivate'));
+        register_activation_hook(__FILE__, array($this, 'onActivate'));
+        register_deactivation_hook(__FILE__, array($this, 'onDeactivate'));
     }
     
     /**
@@ -100,8 +113,8 @@ class LightboxPhotoSwipe
         );
 
         wp_enqueue_script(
-            'photoswipe',
-            plugin_dir_url(__FILE__) . 'js/photoswipe.min.js',
+            'photoswipe-frontend',
+            plugin_dir_url(__FILE__) . 'js/frontend.min.js',
             array('photoswipe-lib', 'photoswipe-ui-default', 'jquery'),
             self::LIGHTBOX_PHOTOSWIPE_VERSION
         );
@@ -115,6 +128,7 @@ class LightboxPhotoSwipe
         $translation_array['share_twitter'] = ($this->share_twitter == '1')?'1':'0';
         $translation_array['share_pinterest'] = ($this->share_pinterest == '1')?'1':'0';
         $translation_array['share_download'] = ($this->share_download == '1')?'1':'0';
+        $translation_array['share_direct'] = ($this->share_direct == '1')?'1':'0';
         $translation_array['close_on_scroll'] = ($this->close_on_scroll != '1')?'1':'0';
         $translation_array['close_on_drag'] = ($this->close_on_drag != '1')?'1':'0';
         $translation_array['history'] = ($this->history == '1')?'1':'0';
@@ -124,8 +138,12 @@ class LightboxPhotoSwipe
         $translation_array['show_caption'] = ($this->show_caption == '1')?'1':'0';
         $translation_array['loop'] = ($this->loop == '1')?'1':'0';
         $translation_array['pinchtoclose'] = ($this->pinchtoclose == '1')?'1':'0';
+        $translation_array['taptotoggle'] = ($this->taptotoggle == '1')?'1':'0';
         $translation_array['spacing'] = intval($this->spacing);
-        wp_localize_script('photoswipe', 'lbwps_options', $translation_array);
+        $translation_array['close_on_click'] = ($this->close_on_click == '1')?'1':'0';
+        $translation_array['fulldesktop'] = ($this->fulldesktop == '1')?'1':'0';
+        $translation_array['use_alt'] = ($this->use_alt == '1')?'1':'0';
+        wp_localize_script('photoswipe-frontend', 'lbwps_options', $translation_array);
         
         wp_enqueue_style(
             'photoswipe-lib',
@@ -135,9 +153,6 @@ class LightboxPhotoSwipe
         );
 
         switch($this->skin) {
-        case '1':
-            $skin = 'classic';
-            break;
         case '2':
             $skin = 'classic-solid';
             break;
@@ -210,6 +225,156 @@ class LightboxPhotoSwipe
     }
 
     /**
+     * Helper to get the camera model from an EXIF array
+     *
+     * @param $exif array  The EXIF array containing the original value
+     *
+     * @return string  The camera model as readable text
+     */
+    function getExifCamera(&$exif)
+    {
+        $make = '';
+        if (isset($exif['IFD0']['Make'])) {
+            $make = $exif['IFD0']['Make'];
+        }
+
+        $model = '';
+        if (isset($exif['IFD0']['Model'])) {
+            $model .= $exif['IFD0']['Model'];
+        }
+
+        $camera = '';
+        if (strlen($make)>0) {
+            if (substr($model, 0, strlen($make)) == $make) {
+                $camera = $model;
+            } else {
+                $camera = $make . ' ' . $model;
+            }
+        } else {
+            $camera = $model;
+        }
+
+        return $camera;
+    }
+
+    /**
+     * Helper to get a float value from an EXIF value
+     *
+     * @param $value string  The value to work with (e.g. "10/40")
+     *
+     * @return float|int
+     */
+    function exifGetFloat($value)
+    {
+        $pos = strpos($value, '/');
+        if ($pos === false) {
+            return (float) $value;
+        }
+        $a = (float) substr($value, 0, $pos);
+        $b = (float) substr($value, $pos+1);
+        return ($b == 0) ? ($a) : ($a / $b);
+    }
+
+    /**
+     * Helper to get the focal length from an EXIF array
+     *
+     * @param $exif array  The EXIF array containing the original value
+     *
+     * @return string      The focal length as readable text (e.h. "100mm")
+     */
+    function exifGetFocalLength(&$exif)
+    {
+        $focal = '';
+        if (isset($exif['EXIF']['FocalLengthIn35mmFilm'])) {
+            $focal = $exif['EXIF']['FocalLengthIn35mmFilm'];
+        } else if (isset($exif['EXIF']['FocalLength'])) {
+            $focal = $exif['EXIF']['FocalLength'];
+        } else {
+            return '';
+        }
+        $focalLength = $this->exifGetFloat($focal);
+        return round($focalLength) . 'mm';
+    }
+
+    /**
+     * Helper to get the shutter speed from an EXIF array
+     *
+     * @param $exif array  The EXIF array containing the original value
+     *
+     * @return string      The shutter speed as readable text (e.h. "1/250s")
+     */
+    function exifGetShutter(&$exif)
+    {
+        if (isset($exif['EXIF']['ExposureTime'])) {
+            return $exif['EXIF']['ExposureTime'].'s';
+        }
+        if (!isset($exif['EXIF']['ShutterSpeedValue'])) {
+            return '';
+        }
+        $apex = $this->exifGetFloat($exif['EXIF']['ShutterSpeedValue']);
+        $shutter = pow(2, -$apex);
+        if ($shutter == 0) {
+            return '';
+        }
+        if ($shutter >= 1) {
+            return round($shutter) . 's';
+        }
+        return '1/' . round(1 / $shutter) . 's';
+    }
+
+    /**
+     * Helper to get the ISO speed rating from an EXIF array
+     *
+     * @param $exif    The EXIF array containing the original value
+     *
+     * @return string  The ISO speed rating as readable text
+     */
+    function exifGetIso(&$exif)
+    {
+        if (!isset($exif['EXIF']['ISOSpeedRatings'])) {
+            return '';
+        }
+        return 'ISO' . $exif['EXIF']['ISOSpeedRatings'];
+    }
+
+    /**
+     * Helper to get the f-stop from an EXIF array
+     *
+     * @param $exif array  The EXIF array containing the original value
+     *
+     * @return string      The f-stop value as readable text (e.g. "f/3.5")
+     */
+    function exifGetFstop(&$exif)
+    {
+        $aperture = '';
+        if (isset($exif['EXIF']['ApertureValue'])) {
+            $aperture = $exif['EXIF']['ApertureValue'];
+        } else if (isset($exif['EXIF']['FNumber'])) {
+            $aperture = isset($exif['EXIF']['FNumber']);
+        } else {
+            return '';
+        }
+        $apex  = $this->exifGetFloat($aperture);
+        $fstop = pow(2, $apex/2);
+        if ($fstop == 0) return '';
+        return 'f/' . round($fstop,1);
+    }
+
+    /**
+     * Helper to add some detail to the EXIF output
+     *
+     * @param $output  Existing output
+     * @param $detail  Detail to add
+     */
+    function exifAddOutput(&$output, $detail)
+    {
+        if ($output != '') {
+            $output .= ', ';
+        }
+        $output .= $detail;
+    }
+
+    /**
      * Callback to handle a single image
      * 
      * @param string $matches existing matches
@@ -233,12 +398,16 @@ class LightboxPhotoSwipe
 
         // Only work on known image formats
         if (in_array($type['ext'], array('jpg', 'jpeg', 'jpe', 'gif', 'png', 'bmp', 'tif', 'tiff', 'ico', 'webp'))) {
-            
             // If image is served by the website itself, try to get caption for local file
-            if (substr($file, 0, strlen($baseurl_http)) == $baseurl_http || substr($file, 0, strlen($baseurl_https)) == $baseurl_https) {
+            if (substr($file, 0, strlen($baseurl_http)) == $baseurl_http || substr($file, 0, strlen($baseurl_https)) == $baseurl_https
+                || substr($file, 0, 7) !== 'http://' || substr($file, 0, 8) !== 'https://') {
+                // Remove domain part
                 $file = str_replace($baseurl_http.'/', '', $file);
                 $file = str_replace($baseurl_https.'/', '', $file);
-            
+
+                // Remove leading slash
+                $file = ltrim($file, '/');
+
                 // Normalized URLs to retrieve the image caption
                 $url_http = $baseurl_http.'/'.$file;
                 $url_https = $baseurl_https.'/'.$file;
@@ -261,30 +430,80 @@ class LightboxPhotoSwipe
                 $imgdate = 0;
             }
             $imgkey = md5($file) . '-'. $imgdate;
-            $imagesize[0] = 0;
-            $imagesize[1] = 0;
-            $table_img = $wpdb->prefix . 'lightbox_photoswipe_img';
-            $entry = $wpdb->get_row("SELECT width, height FROM $table_img where imgkey='$imgkey'");
+            $imageSize[0] = 0;
+            $imageSize[1] = 0;
+            $exifCamera = '';
+            $exifFocal = '';
+            $exifFstop = '';
+            $exifShutter = '';
+            $exifIso = '';
+            $tableImg = $wpdb->prefix . 'lightbox_photoswipe_img';
+            $entry = $wpdb->get_row("SELECT width, height, exif_camera, exif_focal, exif_fstop, exif_shutter, exif_iso FROM $tableImg where imgkey='$imgkey'");
             if (null != $entry) {
-                $imagesize[0] = $entry->width;
-                $imagesize[1] = $entry->height;
+                $imageSize[0] = $entry->width;
+                $imageSize[1] = $entry->height;
+                $exifCamera = $entry->exif_camera;
+                $exifFocal = $entry->exif_focal;
+                $exifFstop  = $entry->exif_fstop;
+                $exifShutter = $entry->exif_shutter;
+                $exifIso = $entry->exif_iso;
             } else {
-                $imagesize = @getimagesize($file);
-                if (is_numeric($imagesize[0]) && is_numeric($imagesize[1])) {
+                $imageSize = @getimagesize($file);
+
+                if (function_exists('exif_read_data')) {
+                    $exif = exif_read_data($file, 'EXIF', true);
+                    $exifCamera = $this->getExifCamera($exif);
+                    $exifFocal = $this->exifGetFocalLength($exif);
+                    $exifFstop = $this->exifGetFstop($exif);
+                    $exifShutter = $this->exifGetShutter($exif);
+                    $exifIso = $this->exifGetIso($exif);
+                }
+
+                if (is_numeric($imageSize[0]) && is_numeric($imageSize[1])) {
                     $created = strftime('%Y-%m-%d %H:%M:%S');
-                    $sql = "INSERT INTO $table_img (imgkey, created, width, height) VALUES (\"$imgkey\", \"$created\", $imagesize[0], $imagesize[1])";
+                    $sql = sprintf(
+                    'INSERT INTO %s (imgkey, created, width, height, exif_camera, exif_focal, exif_fstop, exif_shutter, exif_iso)'.
+                        ' VALUES ("%s", "%s", "%d", "%d", "%s", "%s", "%s", "%s", "%s")',
+                        $tableImg,
+                        $imgkey,
+                        $created,
+                        $imageSize[0],
+                        $imageSize[1],
+                        $exifCamera,
+                        $exifFocal,
+                        $exifFstop,
+                        $exifShutter,
+                        $exifIso
+                    );
                     $wpdb->query($sql);
                 } else {
-                    $imagesize[0] = 0;
-                    $imagesize[1] = 0;
+                    $imageSize[0] = 0;
+                    $imageSize[1] = 0;
                 }
             }
+
             $attr = '';
-            if ($imagesize[0]!=0 && $imagesize[1]!=0) {
-                $attr = ' data-width="'.$imagesize[0].'" data-height="'.$imagesize[1].'"';
+            if (0!=$imageSize[0] && 0!=$imageSize[1]) {
+                $attr = sprintf(' data-width="%s" data-height="%s"', $imageSize[0], $imageSize[1]);
             
                 if ($caption != '') {
-                    $attr .= ' data-caption="'.nl2br(htmlspecialchars(wptexturize($caption))).'"';
+                    $attr .= sprintf(' data-caption="%s"', htmlspecialchars(nl2br(wptexturize($caption))));
+                }
+
+                $exifOutput = '';
+
+                if ($this->show_exif) {
+                    $this->exifAddOutput($exifOutput, $exifFocal);
+                    $this->exifAddOutput($exifOutput, $exifFstop);
+                    $this->exifAddOutput($exifOutput, $exifShutter);
+                    $this->exifAddOutput($exifOutput, $exifIso);
+                    if ($exifCamera != '') {
+                        $exifOutput = sprintf('%s (%s)', $exifCamera, $exifOutput);
+                    }
+
+                    if ($exifOutput != '') {
+                        $attr .= sprintf(' data-exif="%s"', htmlspecialchars($exifOutput));
+                    }
                 }
             }
         }
@@ -296,16 +515,16 @@ class LightboxPhotoSwipe
 
     /**
      * Output filter
-     * 
+     *
      * @param string $content Current HTML output
-     * 
+     *
      * @return string modified HTML output
      */
     function output($content)
     {
         $content = preg_replace_callback(
             '/(<a.[^>]*href=["\'])(.[^"^\']*?)(["\'])([^>]*)(>)/sU',
-            array(get_class($this), 'outputCallback'),
+            array($this, 'outputCallback'),
             $content
         );
         return $content;
@@ -322,7 +541,7 @@ class LightboxPhotoSwipe
     {
         if (!$this->enabled) return;
 
-        ob_start(array(get_class($this), 'output'));
+        ob_start(array($this, 'output'));
     }
 
     /**
@@ -356,6 +575,7 @@ class LightboxPhotoSwipe
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_share_twitter');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_share_pinterest');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_share_download');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_share_direct');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_close_on_scroll');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_close_on_drag');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_history');
@@ -365,9 +585,14 @@ class LightboxPhotoSwipe
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_show_caption');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_loop');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_pinchtoclose');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_taptotoggle');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_skin');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_spacing');
         register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_usepostdata');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_close_on_click');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_fulldesktop');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_use_alt');
+        register_setting('lightbox-photoswipe-settings-group', 'lightbox_photoswipe_showexif');
     }
 
     /**
@@ -377,7 +602,8 @@ class LightboxPhotoSwipe
      */
     function settingsPage()
     {
-        echo '<div class="wrap"><h1>' . __('Lightbox with PhotoSwipe', 'lightbox-photoswipe') . '</h1><form method="post" action="options.php">';
+        echo '<div class="wrap"><h1>' . __('Lightbox with PhotoSwipe', 'lightbox-photoswipe') . '</h1>';
+        echo '<form method="post" action="options.php">';
         settings_fields('lightbox-photoswipe-settings-group');
         // do_settings_sections( 'lightbox-photoswipe-settings-group' );
         echo '<table class="form-table"><tr>
@@ -389,13 +615,16 @@ class LightboxPhotoSwipe
             <td>
             <label for="lightbox_photoswipe_share_facebook"><input id="lightbox_photoswipe_share_facebook" type="checkbox" name="lightbox_photoswipe_share_facebook" value="1"'; if(get_option('lightbox_photoswipe_share_facebook')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Share on Facebook', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_share_twitter"><input id="lightbox_photoswipe_share_twitter" type="checkbox" name="lightbox_photoswipe_share_twitter" value="1" '; if(get_option('lightbox_photoswipe_share_twitter')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Tweet', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_share_direct"><input id="lightbox_photoswipe_share_direct" type="checkbox" name="lightbox_photoswipe_share_direct" value="1"'; if(get_option('lightbox_photoswipe_share_direct')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Use URL of images instead of lightbox on Facebook and Twitter', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_share_pinterest"><input id="lightbox_photoswipe_share_pinterest" type="checkbox" name="lightbox_photoswipe_share_pinterest" value="1" '; if(get_option('lightbox_photoswipe_share_pinterest')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Pin it', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_share_download"><input id="lightbox_photoswipe_share_download" type="checkbox" name="lightbox_photoswipe_share_download" value="1"'; if(get_option('lightbox_photoswipe_share_download')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Download image', 'lightbox-photoswipe').'</label>
-            </td></tr>
+            </td>
+            </tr>
             <tr>
             <th scope="row">'.__('Other options', 'lightbox-photoswipe').'</th>
             <td>
-            <label for="lightbox_photoswipe_usepostdata"><input id="lightbox_photoswipe_pinctoclose" type="checkbox" name="lightbox_photoswipe_usepostdata" value="1"'; if(get_option('lightbox_photoswipe_usepostdata')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Get the image captions from the database (this may cause delays on slower servers)', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_usepostdata"><input id="lightbox_photoswipe_usepostdata" type="checkbox" name="lightbox_photoswipe_usepostdata" value="1"'; if(get_option('lightbox_photoswipe_usepostdata')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Get the image captions from the database (this may cause delays on slower servers)', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_use_alt"><input id="lightbox_photoswipe_use_alt" type="checkbox" name="lightbox_photoswipe_use_alt" value="1"'; if(get_option('lightbox_photoswipe_use_alt')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Use alternative text of images as captions if needed', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_close_on_scroll"><input id="lightbox_photoswipe_close_on_scroll" type="checkbox" name="lightbox_photoswipe_close_on_scroll" value="1"'; if(get_option('lightbox_photoswipe_close_on_scroll')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Close when scrolling in desktop view', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_close_on_drag"><input id="lightbox_photoswipe_close_on_drag" type="checkbox" name="lightbox_photoswipe_close_on_drag" value="1"'; if(get_option('lightbox_photoswipe_close_on_drag')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Close with vertical drag in mobile view', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_history"><input id="lightbox_photoswipe_history" type="checkbox" name="lightbox_photoswipe_history" value="1"'; if(get_option('lightbox_photoswipe_history')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Activate browser history', 'lightbox-photoswipe').'</label><br />
@@ -404,8 +633,19 @@ class LightboxPhotoSwipe
             <label for="lightbox_photoswipe_show_zoom"><input id="lightbox_photoswipe_show_zoom" type="checkbox" name="lightbox_photoswipe_show_zoom" value="1"'; if(get_option('lightbox_photoswipe_show_zoom')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Show zoom button if available', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_show_caption"><input id="lightbox_photoswipe_show_caption" type="checkbox" name="lightbox_photoswipe_show_caption" value="1"'; if(get_option('lightbox_photoswipe_show_caption')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Show caption if available', 'lightbox-photoswipe').'</label><br />
             <label for="lightbox_photoswipe_loop"><input id="lightbox_photoswipe_loop" type="checkbox" name="lightbox_photoswipe_loop" value="1"'; if(get_option('lightbox_photoswipe_loop')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Allow infinite loop', 'lightbox-photoswipe').'</label><br />
-            <label for="lightbox_photoswipe_pinchtoclose"><input id="lightbox_photoswipe_pinctoclose" type="checkbox" name="lightbox_photoswipe_pinchtoclose" value="1"'; if(get_option('lightbox_photoswipe_pinchtoclose')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Enable pinch to close gesture', 'lightbox-photoswipe').'</label>
-            </td></tr>';
+            <label for="lightbox_photoswipe_pinchtoclose"><input id="lightbox_photoswipe_pinchtoclose" type="checkbox" name="lightbox_photoswipe_pinchtoclose" value="1"'; if(get_option('lightbox_photoswipe_pinchtoclose')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Enable pinch to close gesture on mobile devices', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_taptotoggle"><input id="lightbox_photoswipe_taptotoggle" type="checkbox" name="lightbox_photoswipe_taptotoggle" value="1"'; if(get_option('lightbox_photoswipe_taptotoggle')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Enable tap to toggle controls on mobile devices', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_close_on_click"><input id="lightbox_photoswipe_close_on_click" type="checkbox" name="lightbox_photoswipe_close_on_click" value="1"'; if(get_option('lightbox_photoswipe_close_on_click')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Close the lightbox by clicking outside the image', 'lightbox-photoswipe').'</label><br />
+            <label for="lightbox_photoswipe_fulldesktop"><input id="lightbox_photoswipe_fulldesktop" type="checkbox" name="lightbox_photoswipe_fulldesktop" value="1"'; if(get_option('lightbox_photoswipe_fulldesktop')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Full picture size in desktop view', 'lightbox-photoswipe').'</label>
+            <tr>';
+        echo '<th scope="row">'.__('EXIF data', 'lightbox-photoswipe').'</th><td>';
+        echo '<label for="lightbox_photoswipe_showexif"><input id="lightbox_photoswipe_showexif" type="checkbox" name="lightbox_photoswipe_showexif" value="1"'; if(get_option('lightbox_photoswipe_showexif')=='1') echo ' checked="checked"'; echo ' />&nbsp;'.__('Show EXIF data if available', 'lightbox-photoswipe').'</label>';
+        if (!function_exists('exif_read_data')) {
+            echo '<p><em>';
+            echo __('Please note: <a href="https://www.php.net/manual/en/book.exif.php" target="_blank">The PHP EXIF extension</a> is missing!', 'lightbox-photoswipe');
+            echo '</em></p>';
+        }
+        echo '</td></tr>';
         echo '<th scope="row">'.__('Spacing between pictures', 'lightbox-photoswipe').'</th>';
         echo '<td><label for="lightbox_photoswipe_spacing"><select id="lightbox_photoswipe_spacing" name="lightbox_photoswipe_spacing">';
         for ($spacing = 0; $spacing < 13; $spacing++) {
@@ -454,6 +694,11 @@ class LightboxPhotoSwipe
           created datetime,
           width mediumint(7),
           height mediumint(7),
+          exif_camera varchar(255),
+          exif_focal varchar(255),
+          exif_fstop varchar(255),
+          exif_shutter varchar(255),
+          exif_iso varchar(255),
           PRIMARY KEY (imgkey),
           INDEX idx_created (created)
         ) $charset_collate;";
@@ -496,6 +741,7 @@ class LightboxPhotoSwipe
             update_option('lightbox_photoswipe_share_pinterest', '1');
             update_option('lightbox_photoswipe_share_twitter', '1');
             update_option('lightbox_photoswipe_share_download', '1');
+            update_option('lightbox_photoswipe_share_direct', '0');
             update_option('lightbox_photoswipe_close_on_scroll', '1');
             update_option('lightbox_photoswipe_close_on_drag', '1');
             update_option('lightbox_photoswipe_show_counter', '1');
@@ -504,8 +750,13 @@ class LightboxPhotoSwipe
             update_option('lightbox_photoswipe_show_caption', '1');
             update_option('lightbox_photoswipe_loop', '1');
             update_option('lightbox_photoswipe_pinchtoclose', '1');
+            update_option('lightbox_photoswipe_taptotoggle', '1');
             update_option('lightbox_photoswipe_skin', '3');
             update_option('lightbox_photoswipe_spacing', '12');
+            update_option('lightbox_photoswipe_close_on_click', '1');
+            update_option('lightbox_photoswipe_fulldesktop', '0');
+            update_option('lightbox_photoswipe_use_alt', '0');
+            update_option('lightbox_photoswipe_showexif', '0');
             restore_current_blog();
         }
     }
@@ -613,9 +864,28 @@ class LightboxPhotoSwipe
         if (intval($db_version) < 10) {
             $this->onActivate();
         }
-        
-        add_action('lbwps_cleanup', array(get_class($this), 'cleanupDatabase'));
-        update_option('lightbox_photoswipe_db_version', 10);
+        if (intval($db_version) < 11) {
+            update_option('lightbox_photoswipe_taptotoggle', '1');
+        }
+        if (intval($db_version) < 12) {
+            update_option('lightbox_photoswipe_share_direct', '0');
+        }
+        if (intval($db_version) < 13) {
+            update_option('lightbox_photoswipe_close_on_click', '1');
+        }
+        if (intval($db_version) < 14) {
+            update_option('lightbox_photoswipe_fulldesktop', '0');
+        }
+        if (intval($db_version) < 15) {
+            update_option('lightbox_photoswipe_use_alt', '0');
+        }
+        if (intval($db_version) < 16) {
+            update_option('lightbox_photoswipe_showexif', '0');
+            $this->deleteTables();
+            $this->createTables();
+        }
+        add_action('lbwps_cleanup', array($this, 'cleanupDatabase'));
+        update_option('lightbox_photoswipe_db_version', 16);
     }
 }
 

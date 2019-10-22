@@ -3,8 +3,8 @@
 Contributors: awelzel
 Tags: attachments, images, gallery, lightbox, fancybox, photoswipe
 Requires at least: 4.0
-Tested up to: 5.1
-Stable tag: 1.97
+Tested up to: 5.2
+Stable tag: 2.8
 License: GPLv2
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,7 +14,9 @@ Integration of PhotoSwipe (http://photoswipe.com) for WordPress.
 
 This plugin is a simple integration of PhotoSwipe to WordPress. All linked images in a post or page will be displayed using PhotoSwipe, regardless if they are part of a gallery or single images. Just make sure that you link the image or gallery directly to the media and not the attachment page (in galleries the option `link=file` should be set).
 
-More about PhotoSwipe see here: http://photoswipe.com
+More about PhotoSwipe see here: [http://photoswipe.com](http://photoswipe.com)
+
+The version of PhotoSwipe provided with this plugin comes with a number of modifications and extensions. See the FAQ for details.
 
 == Installation ==
 
@@ -28,6 +30,20 @@ More about PhotoSwipe see here: http://photoswipe.com
 All linked images in a post or page will be displayed using PhotoSwipe, regardless if they are part of a gallery or single images.
 
 Make sure that you link the image or gallery directly to the media and not the attachment page (in galleries the option `link=file` should be set).
+
+= Experimental feature: return to a specific URL when closing the lightbox =
+
+Note: this was changed with version 2.0. The previous parameter `return` is no longer supported.
+
+When you activate the setting for "Activate browser history" you can link directly to an image inside a page or post:
+
+`http://domain.example/example-page#gid=1&pid=1`
+
+This will load the given page/post and automatically open the first image (`pid=1`) in the lightbox. However, when closing the lightbox, you will see the page or post itself. Sometimes it is preferred to go to a specific URL when closing the lightbox. This can be done by using `returnurl` combined with the URL to got to as the first parameter:
+
+`http://domain.example/example-page#returnurl=http://domain.example&gid=1&pid=1`
+
+When a visitor now opens the link, closing the lightbox will get the visitor to specified URL `http://domain.example`.
 
 = How to disable the plugin in certain pages/posts =
 
@@ -73,9 +89,19 @@ A "quick & dirty" example to add additional stuff in the header with the control
 
 add_filter('lbwps_markup', 'my_lbwps_markup', 10, 1);`
 
+= How to style the caption below the images =
+
+If you want to style the caption below the images, you need to create custom styles for the following CSS classes:
+
+pswp__caption__center - this class is used for the whole caption area.
+
+pswp__caption__title and pswp__caption__desc - these classes are used, if the caption is divided into a title an description (based on the data-caption-title and data-caption-desc attributes in the image link).
+
+pswp__caption__exif - this class is used for the EXIF data DIV element.
+
 = Why is there no "zoom animation" when opening the lightbox? =
 
-PhotoSwipe has the option to create a zoom animation from the thumbnail to the final image when opening the lightbox. However, this does not work well with square thumbnails since the thumbnail is just enlarged to the final image size without keeping its aspect ratio. This would result in a quite weird image display where a square thumbnail gets stretched to a portrait or landscape image before the final image is loaded. Just having a black background where the final image gets loaded seems to be the better solution. Also see http://photoswipe.com/documentation/faq.html about this topic.
+PhotoSwipe has the option to create a zoom animation from the thumbnail to the final image when opening the lightbox. However, this does not work well with square thumbnails since the thumbnail is just enlarged to the final image size without keeping its aspect ratio. This would result in a quite weird image display where a square thumbnail gets stretched to a portrait or landscape image before the final image is loaded. Just having a black background where the final image gets loaded seems to be the better solution. Also see [http://photoswipe.com/documentation/faq.html](http://photoswipe.com/documentation/faq.html) about this topic.
 
 = Conflict with Advanced Gutenberg =
 
@@ -83,7 +109,7 @@ Lightbox with PhotoSwipe works fine with Gutenberg gallery blocks as well. Howev
 
 = Local changes in PhotoSwipe =
 
-The following changes are the differences to PhotoSwipe 4.0 as of 2018-11-08:
+The following changes are the differences to PhotoSwipe 4.0 as of 2019-09-24:
 
 1) The default UI is based on a CSS file and a number of graphics in different formats. This CSS file got modified to provide a fix for WordPress themes which use elements with a quite high Z index which hide the controls of PhotoSwipe. By setting the Z index of the affected controls to the highest possible value, all controls stay visible in front.
 
@@ -95,6 +121,14 @@ The following changes are the differences to PhotoSwipe 4.0 as of 2018-11-08:
 
 5) The grey placeholder for images when opening the lightbox is not visible (this was accomplished by adding `display: none;` for the placeholder).
 
+6) Arrows for next and previous picture will be hidden for the first or last picture if no endless loop is activated.
+
+7) When using full picture size in desktop view the UI elements will hide automatically and not only after a mouse movement and the image caption will also be hidden together with the navigation.
+
+8) Full screen mode can also be activated by pressing the key "F" on the keyboard.
+
+9) Gallery items support an optional "exif" property to display EXIF information in addition to the caption.
+
 = Licensing =
 
 To avoid any confusion: this plugin was published with the agreement of Dmitry Semenov.
@@ -105,6 +139,57 @@ To avoid any confusion: this plugin was published with the agreement of Dmitry S
 2. Example for the use in the frontend
 
 == Changelog ==
+
+= 2.7, 2.8 =
+
+* Additional option to display EXIF information as caption.
+
+= 2.6 =
+
+* Full screen mode can now also be activated by pressing the key "F" on the keyboard.
+* Set maximum possible priority for the output filter so it will be called at the latest possible moment.
+
+= 2.5 =
+
+* If images links contain attributes `data-caption-title` and `data-caption-desc` these attributes will be used as separate elements in the caption.
+
+= 2.4 =
+
+* Fixed a bug when using full picture size in desktop view.
+* Endless loop is now also supported with only two images.
+* Added an option to use the alternative text in the image as caption if needed.
+
+= 2.3 =
+
+* Clicking images will no longer close them.
+
+= 2.2 =
+
+* Added option to show pictures in full size in desktop view.
+
+= 2.1 =
+
+* Closing the lightbox by clicking the background enabled again and made configurable.
+
+= 2.0 =
+
+* The lightbox will not close any longer when clicking the background.
+* Fix to avoid PHP notices because of using dynamic methods as static ones.
+* Changed experimental feature "return on close" to "open URL on close".
+
+= 1.99 =
+
+* Modified "return on close" option to return to the previous URL without closing animation.
+* Added option to select between image or lightbox URL when sharing on Facebook or Twitter.
+* Added missing translations.
+
+= 1.98 =
+
+* Added backend option to enable or disable "tap to toggle UI controls" gesture on mobile devices.
+* Added experimental support for "return on close" (see the description how to use this).
+* Internal links without domain part (`/wp-content/...` instead of `http://domain.example/wp-content/...`) now also work.
+* Code refactoring: frontend script is now called "js/frontend.js".
+* Improved support for captions in Meow Gallery.
 
 = 1.97 =
 
